@@ -27,6 +27,7 @@ static std::vector<CFGNode> CFGNodeVec;
 KInduction::Result KInduction::verify(const Module& t_M, const unsigned k){
 
 	outs()<<"+=========== Verifying ===========+\n";
+    CFGNodeVec.clear();
 	if(hasNotExpandedCalls(t_M, g_SpecFuncNames)){
 		return UNKNOWN;
 	}
@@ -51,20 +52,40 @@ KInduction::Result KInduction::verify(const Module& t_M, const unsigned k){
 
     printCFGNode();
 
+    int assertLoopIdx = findVerifyLoop(MainLCSSAs);
+    assert(assertLoopIdx != -1);
+    cout << "find assert in : " << assertLoopIdx << endl;
+
     vector<int> initNode;
     collectInitBasicBlock(initNode);
-
     assert(initNode.size() > 0);
+    
+    vector<Path> path;
+    collectVerifyPath(path, initNode, MainLCSSAs, assertLoopIdx);
+
+    cout << "PRINT PATH:\n";
+    for(int i = 0; i < path.size(); i++) {
+        if(path[i].type == Path::NodeType::ANode) {
+            cout << "Node : " << path[i].nodeIdx << endl;
+        }
+        else {
+            cout << "Loop : " << path[i].loopLCSSAIdx << endl;
+        }
+    }
+
+
+
+    
 
     // cout << "find path : " << endl;
     // for(int i = 0; i < initNode.size(); i++)
     //     cout << CFGNodeVec[initNode[i]].bb->getName().str() << endl;
     
-    int assertLoopIdx = findVerifyLoop(MainLCSSAs);
-    assert(assertLoopIdx != -1);
-    cout << "find assert in : " << assertLoopIdx << endl;
+    
 
-    baseCase(initNode, assertLoopIdx, LCSSAInfo, k);    
+
+
+    baseCase(path, assertLoopIdx, MainLCSSAs, k);    
 
 	return UNKNOWN;
 }
@@ -212,6 +233,74 @@ bool KInduction::basicBlockDFS(vector<int>& vec) {
         return true;
 }
 
+void KInduction::collectVerifyPath(vector<Path>& path, vector<int>& initNodes, vector<LCSSA>& LCSSAs, 
+                                int assertLoopIdx) {
+
+    assert(CFGNodeVec[initNodes.back()].isLoopNode);
+    assert(initNodes.size() > 0);
+    vector<bool> visit(CFGNodeVec.size(), false);
+    for(int i = 0; i < initNodes.size() - 1; i++) {
+        path.push_back(Path(Path::NodeType::ANode, initNodes[i]));
+        visit[initNodes[i]] = true;
+    }
+
+    path.push_back(Path(Path::NodeType::ALoop, CFGNodeVec[initNodes.back()].LCSSAIndex));
+
+    while(true) {
+        if(path.back().type == Path::NodeType::ALoop && path.back().loopLCSSAIdx == assertLoopIdx)
+            break;
+        if(path.back().type == Path::NodeType::ANode) {
+            int nodeIdx = path.back().nodeIdx;
+            bool findNextStep = false;
+            for(int i = 0; i < CFGNodeVec[nodeIdx].childs.size(); i++) {
+                if(!visit[CFGNodeVec[nodeIdx].childs[i]]) {
+                    visit[CFGNodeVec[nodeIdx].childs[i]] = true;
+                    findNextStep = true;
+                    if(CFGNodeVec[CFGNodeVec[nodeIdx].childs[i]].isLoopNode) {
+                        path.push_back(Path(Path::NodeType::ALoop, CFGNodeVec[CFGNodeVec[nodeIdx].childs[i]].LCSSAIndex));
+                    }
+                    else {
+                        path.push_back(Path(Path::NodeType::ANode, CFGNodeVec[nodeIdx].childs[i]));
+                    }
+                    break;
+                }
+            }
+            if(!findNextStep) {
+                assert(path.size() > 0);
+                path.pop_back();
+            }
+        }
+        else {
+            int lcssaIdx = path.back().loopLCSSAIdx;
+            for(int i = 0; i < LCSSAs[lcssaIdx].bbVec.size(); i++) {
+                visit[getCFGNodeVecIndexByBB(LCSSAs[lcssaIdx].bbVec[i])] = true;
+            }
+
+            const BasicBlock* lastBB = LCSSAs[lcssaIdx].backedge.first;
+            int lastBBIdx = getCFGNodeVecIndexByBB(lastBB);
+
+            bool findNextStep = false;
+            for(int i = 0; i < CFGNodeVec[lastBBIdx].childs.size(); i++) {
+                if(!visit[CFGNodeVec[lastBBIdx].childs[i]]) {
+                    visit[CFGNodeVec[lastBBIdx].childs[i]] = true;
+                    findNextStep = true;
+                    if(CFGNodeVec[CFGNodeVec[lastBBIdx].childs[i]].isLoopNode) {
+                        path.push_back(Path(Path::NodeType::ALoop, CFGNodeVec[CFGNodeVec[lastBBIdx].childs[i]].LCSSAIndex));
+                    }
+                    else {
+                        path.push_back(Path(Path::NodeType::ANode, CFGNodeVec[lastBBIdx].childs[i]));
+                    }
+                }
+            }
+            if(!findNextStep) {
+                assert(path.size() > 0);
+                path.pop_back();
+            }
+        }
+    }
+    return ;
+}
+
 // if the loop's BB lead to a BB contains reach_error, than it's the verify loop
 int KInduction::findVerifyLoop(vector<LCSSA>& LCSSAInfo) {
     int index = -1;
@@ -242,6 +331,68 @@ int KInduction::findVerifyLoop(vector<LCSSA>& LCSSAInfo) {
     }
     return index;
 }
+
+
+bool KInduction::baseCase(vector<Path>& path, int assertLoopIdx, vector<LCSSA>& LCSSAs, unsigned k) {
+    
+    // for(int i = 0; i < initNodes.size(); i++) {
+    //     cout << "initNode : " << initNodes[i] << " \t";
+    // }
+    // cout << endl;
+
+    // cout << "assertLoopIdx = " << assertLoopIdx << endl;
+
+    // cout << "LCSSAs : " << endl;
+    // for(int i = 0; i < LCSSAs.size(); i++) {
+    //     cout << LCSSAs[i].bbVec.size() << endl << "\t";
+    //     for(int j = 0; j < LCSSAs[i].bbVec.size(); j++) {
+    //         errs() << LCSSAs[i].bbVec[j]->getName() << "\n";
+    //     }
+    // }
+    // cout << endl;
+
+    vector<int> baseNodeIdx;
+
+    for(int i = 0; i < path.size(); i++) {
+        if(path[i].type == Path::NodeType::ANode) {
+            baseNodeIdx.push_back(path[i].nodeIdx);
+        }
+        else if(path[i].type == Path::ALoop) {
+            int lcssaIdx = path[i].loopLCSSAIdx;
+            errs() << "backedge first = " << LCSSAs[lcssaIdx].backedge.first->getName() << "\n"
+                    << "backedge second = " << LCSSAs[lcssaIdx].backedge.second->getName() << "\n";
+            assert(LCSSAs[lcssaIdx].backedge.first == LCSSAs[lcssaIdx].bbVec[0] 
+                    && LCSSAs[lcssaIdx].backedge.second == LCSSAs[lcssaIdx].bbVec.back());
+            for(int j = 0; j < k; j++) {
+                for(int loop_bb_count = 0; loop_bb_count < LCSSAs[lcssaIdx].bbVec.size(); loop_bb_count++) {
+                    baseNodeIdx.push_back(getCFGNodeVecIndexByBB(LCSSAs[lcssaIdx].bbVec[loop_bb_count]));
+                }
+            }
+        }
+        else {
+            assert(false);
+        }
+    }
+
+    cout << "PRINT BASE CASE PATH : " << endl;
+    for(int i = 0; i < baseNodeIdx.size(); i++) {
+        cout << baseNodeIdx[i] << "\t";
+    }
+    cout << endl;
+
+
+    return true;
+}
+
+int KInduction::getCFGNodeVecIndexByBB(const llvm::BasicBlock* bb) {
+    for(int i = 0; i < CFGNodeVec.size(); i++) {
+        if(CFGNodeVec[i].bb == bb)
+            return i;
+    }
+    assert(false);
+    return -1;
+}
+
 
 void printCFGNode() {
     cout << "CFG Node size = " << CFGNodeVec.size() << endl;

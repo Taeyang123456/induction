@@ -17,5 +17,15 @@ struct CFGNode {
     
 };
 
+struct Path {
+    enum NodeType {
+        ALoop,
+        ANode
+    };
+    NodeType type;
+    int loopLCSSAIdx = 0;
+    int nodeIdx = 0;
+    Path(NodeType t, int id) { type = t; if(type == ALoop) loopLCSSAIdx = id; else nodeIdx = id; }
+};
 
 #endif

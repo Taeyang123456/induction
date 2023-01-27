@@ -24,9 +24,12 @@ private:
 	static bool hasNotExpandedCalls(const llvm::Module&, const std::set<std::string>&);
 	static bool hasAssertions(const std::vector<LabeledCondition>&);
     static void collectInitBasicBlock(std::vector<int>&);
+    static void collectVerifyPath(std::vector<Path>&, std::vector<int>&, std::vector<LCSSA>&, int);
     static bool basicBlockDFS(std::vector<int>&);
     static int findVerifyLoop(std::vector<LCSSA>&);
-    static bool baseCase(std::vector<int>&, int, std::vector<LCSSA>&, unsigned);
+    static bool baseCase(std::vector<Path>&, int, std::vector<LCSSA>&, unsigned);
+    static int getCFGNodeVecIndexByBB(const llvm::BasicBlock*);
+
 };
 
 void printCFGNode();
