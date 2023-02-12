@@ -17,6 +17,7 @@
 #include <iostream>
 #include <stack>
 #include <queue>
+#include <z3++.h>
 
 
 using namespace std;
@@ -68,8 +69,17 @@ KInduction::Result KInduction::verify(const Module& t_M, const unsigned k){
         if(path[i].type == Path::NodeType::ANode) {
             cout << "Node : " << path[i].nodeIdx << endl;
         }
-        else {
+        else if(path[i].type == Path::NodeType::ALoop) {
             cout << "Loop : " << path[i].loopLCSSAIdx << endl;
+        }
+        else if(path[i].type == Path::NodeType::ERRORLOOP) {
+            cout << "ERRORLOOP : " << endl;
+        }
+        else if(path[i].type == Path::NodeType::ERRORNODE) {
+            cout << "ERRORNODE : " << endl;
+        }
+        else {
+            assert(false);
         }
     }
 
@@ -86,6 +96,7 @@ KInduction::Result KInduction::verify(const Module& t_M, const unsigned k){
 
 
     baseCase(path, assertLoopIdx, MainLCSSAs, k);    
+
 
 	return UNKNOWN;
 }
@@ -247,8 +258,10 @@ void KInduction::collectVerifyPath(vector<Path>& path, vector<int>& initNodes, v
     path.push_back(Path(Path::NodeType::ALoop, CFGNodeVec[initNodes.back()].LCSSAIndex));
 
     while(true) {
-        if(path.back().type == Path::NodeType::ALoop && path.back().loopLCSSAIdx == assertLoopIdx)
+        if(path.back().type == Path::NodeType::ALoop && path.back().loopLCSSAIdx == assertLoopIdx) {
+            path.back().type = Path::NodeType::ERRORLOOP;
             break;
+        }
         if(path.back().type == Path::NodeType::ANode) {
             int nodeIdx = path.back().nodeIdx;
             bool findNextStep = false;
@@ -298,6 +311,21 @@ void KInduction::collectVerifyPath(vector<Path>& path, vector<int>& initNodes, v
             }
         }
     }
+
+
+    // add ERROR block to path
+    int errorLoop = path.back().loopLCSSAIdx;
+    int errorLoopLastBB = getCFGNodeVecIndexByBB(LCSSAs[errorLoop].backedge.first);
+    int i = 0;
+    for(; i < CFGNodeVec[errorLoopLastBB].childs.size(); i++) {
+        int childIdx = CFGNodeVec[errorLoopLastBB].childs[i];
+        errs() << CFGNodeVec[childIdx].bb->getName() << "\n";
+        if(CFGNodeVec[childIdx].bb->getName().str().find("ERROR") != string::npos) {
+            path.push_back(Path(Path::NodeType::ERRORNODE, childIdx));
+            break;
+        }
+    }
+    assert(i != CFGNodeVec[errorLoopLastBB].childs.size());
     return ;
 }
 
@@ -351,37 +379,145 @@ bool KInduction::baseCase(vector<Path>& path, int assertLoopIdx, vector<LCSSA>& 
     // }
     // cout << endl;
 
-    vector<int> baseNodeIdx;
+    // Pattern 1 : VERIFIER_assert in a loop
+    if(path.size() >= 2 && path.back().type == Path::NodeType::ERRORNODE &&
+        path[path.size() - 2].type == Path::NodeType::ERRORLOOP) {
+        vector<int> baseNodeIdx;
 
-    for(int i = 0; i < path.size(); i++) {
-        if(path[i].type == Path::NodeType::ANode) {
-            baseNodeIdx.push_back(path[i].nodeIdx);
-        }
-        else if(path[i].type == Path::ALoop) {
-            int lcssaIdx = path[i].loopLCSSAIdx;
-            errs() << "backedge first = " << LCSSAs[lcssaIdx].backedge.first->getName() << "\n"
-                    << "backedge second = " << LCSSAs[lcssaIdx].backedge.second->getName() << "\n";
-            assert(LCSSAs[lcssaIdx].backedge.first == LCSSAs[lcssaIdx].bbVec[0] 
-                    && LCSSAs[lcssaIdx].backedge.second == LCSSAs[lcssaIdx].bbVec.back());
-            for(int j = 0; j < k; j++) {
-                for(int loop_bb_count = 0; loop_bb_count < LCSSAs[lcssaIdx].bbVec.size(); loop_bb_count++) {
-                    baseNodeIdx.push_back(getCFGNodeVecIndexByBB(LCSSAs[lcssaIdx].bbVec[loop_bb_count]));
+        for(int errorLoopCount = 1; errorLoopCount <= k; errorLoopCount++) {
+            for(int i = 0; i < path.size(); i++) {
+                if(path[i].type == Path::ANode) {
+                    baseNodeIdx.push_back(path[i].nodeIdx);
+                }
+                else if(path[i].type == Path::ALoop) {
+                    int lcssaIdx = path[i].loopLCSSAIdx;
+                    assert(LCSSAs[lcssaIdx].backedge.first == LCSSAs[lcssaIdx].bbVec[0] 
+                            && LCSSAs[lcssaIdx].backedge.second == LCSSAs[lcssaIdx].bbVec.back());
+                    for(int j = 0; j < k; j++) {
+                        for(int loop_bb_count = 0; loop_bb_count < LCSSAs[lcssaIdx].bbVec.size(); loop_bb_count++) {
+                            baseNodeIdx.push_back(getCFGNodeVecIndexByBB(LCSSAs[lcssaIdx].bbVec[loop_bb_count]));
+                        }
+                    }
+                }
+                else if(path[i].type == Path::ERRORLOOP) {
+                    int lcssaIdx = path[i].loopLCSSAIdx;
+                    for(int j = 0; j < errorLoopCount; j++) {
+                        for(int bbCount = 0; bbCount < LCSSAs[lcssaIdx].bbVec.size(); bbCount++) {
+                            baseNodeIdx.push_back(getCFGNodeVecIndexByBB(LCSSAs[lcssaIdx].bbVec[bbCount]));
+                        }
+                    }
+                }
+                else if(path[i].type == Path::ERRORNODE) {
+                    baseNodeIdx.push_back(path[i].nodeIdx);
+                }
+                else {
+                    assert(false);
                 }
             }
+
+            // cout << "base node : " << endl;
+            // for(int i = 0; i < baseNodeIdx.size(); i++) {
+            //     cout << baseNodeIdx[i] << endl;
+            // }
+            baseCaseSMTChecking(baseNodeIdx, errorLoopCount);
+
+            baseNodeIdx.clear();
         }
-        else {
-            assert(false);
-        }
+    }
+    else {
+        assert(false && "Base case Path type not support");
     }
 
-    cout << "PRINT BASE CASE PATH : " << endl;
-    for(int i = 0; i < baseNodeIdx.size(); i++) {
-        cout << baseNodeIdx[i] << "\t";
-    }
-    cout << endl;
+    // cout << "PRINT BASE CASE PATH : " << endl;
+    // for(int i = 0; i < baseNodeIdx.size(); i++) {
+    //     cout << baseNodeIdx[i] << "\t";
+    // }
+    // cout << endl;
+
+
+    // for(int i = 0; i < baseNodeIdx.size(); i++) {
+    //     BasicBlock* bb = CFGNodeVec[i].bb;
+    //     for(Instruction& inst : *bb) {
+    //         errs() << inst << "\n";
+    //     }
+    // }
 
 
     return true;
+}
+
+bool KInduction::baseCaseSMTChecking(vector<int>& baseNodeIdx, int kval) {
+
+    z3::context context;
+    std::map<llvm::Value*, expr_info> val2exprIdx;
+    z3::expr_vector exprs(context);
+
+
+    z3::expr_vector problems(context);
+
+    for(int i = 0; i < baseNodeIdx.size(); i++) {
+        int nodeIdx = baseNodeIdx[i];
+        BasicBlock* bb = CFGNodeVec[nodeIdx].bb;
+        for(Instruction& I : *bb) {
+            if(isa<CallInst>(I)) {
+                CallInst& callInst = cast<CallInst>(I);
+                if(callInst.getCalledFunction()->getName().str() == "__VERIFIER_nondet_int") {
+                    Value* destVal = &callInst;
+                    problems.push_back(getExprWithRefresh(destVal, exprs, val2exprIdx, context) == kval);
+                }
+                else {
+                    assert(false);
+                }
+            }
+            else if(isa<StoreInst>(I)) {
+                StoreInst& storeInst = cast<StoreInst>(I);
+                Value* srcVal = storeInst.getOperand(0);
+                Value* destVal = storeInst.getOperand(1);
+                assert(destVal->getType()->isPointerTy());
+                
+                if(GlobalValue* gv = dyn_cast<GlobalValue>(destVal)) {
+                    problems.push_back(getExpr(srcVal, exprs, val2exprIdx, context) 
+                            == getExprWithRefresh(destVal, exprs, val2exprIdx, context));
+                }
+                else {
+                    assert(false);
+                }
+                
+            }
+            else if(isa<BinaryOperator>(I)) {
+                problems.push_back(handleBinaryOp(I, exprs, val2exprIdx, context));
+            }
+            else if(isa<CmpInst>(I)) {
+                problems.push_back(handleCmpOp(I, exprs, val2exprIdx, context));
+            }
+            else if(isa<BranchInst>(I)) {
+                BranchInst& branchInst = cast<BranchInst>(I);
+                if(branchInst.isConditional()) {
+                    Value* conditionVal = branchInst.getOperand(0);
+                    Value* bb1Val = branchInst.getOperand(2);
+                    Value* bb2Val = branchInst.getOperand(1);
+
+                    assert(i + 1 <= baseNodeIdx.size());
+                    int nextNodeIdx = baseNodeIdx[i + 1];
+                    BasicBlock* nextbb = CFGNodeVec[nextNodeIdx].bb;
+                    if(nextbb->getName() == bb1Val->getName()) {
+                        problems.push_back(getExpr(conditionVal, exprs, val2exprIdx, context) == 1);
+                    }
+                    else if(nextbb->getName() == bb2Val->getName()) {
+                        problems.push_back(getExpr(conditionVal, exprs, val2exprIdx, context) == 0);
+                    }
+                    else {
+                        assert(false);
+                    }
+
+                }
+            }
+            else {
+                errs() << I << "\n";
+                assert(false);
+            }
+        }
+    }
 }
 
 int KInduction::getCFGNodeVecIndexByBB(const llvm::BasicBlock* bb) {
@@ -391,6 +527,137 @@ int KInduction::getCFGNodeVecIndexByBB(const llvm::BasicBlock* bb) {
     }
     assert(false);
     return -1;
+}
+
+z3::expr KInduction::handleBinaryOp(Instruction& I, z3::expr_vector& exprs, map<Value*, expr_info>& val2exprIdx, z3::context& context) {
+    z3::expr exprl(context);
+    z3::expr exprr(context);
+
+    Value* v1 = I.getOperand(0);
+    Value* v2 = I.getOperand(1);
+
+    if(ConstantInt* constantInt = dyn_cast<ConstantInt>(v1)) {
+        exprl = context.bv_val(constantInt->getSExtValue(), constantInt->getType()->getPrimitiveSizeInBits());
+    }
+    else {
+        exprl = getExpr(v1, exprs, val2exprIdx, context);
+    }
+
+    if(ConstantInt* constantInt = dyn_cast<ConstantInt>(v2)) {
+        exprr = context.bv_val(constantInt->getSExtValue(), constantInt->getType()->getPrimitiveSizeInBits());
+    }
+    else {
+        exprr = getExpr(v2, exprs, val2exprIdx, context);
+    }
+
+    
+
+    if(isa<AddOperator>(I)) {
+        return getExprWithRefresh(&I, exprs, val2exprIdx, context) == exprl + exprr;
+    }
+    else if(isa<ShlOperator>(I)) {
+        return getExprWithRefresh(&I, exprs, val2exprIdx, context) == z3::shl(exprl, exprr);
+    }
+    else {
+        outs() << I << "\n";
+        assert(false);
+    }
+}
+
+z3::expr KInduction::handleCmpOp(Instruction& I, z3::expr_vector& exprs, map<Value*, expr_info>& val2exprIdx, z3::context& context) {
+    z3::expr exprl(context);
+    z3::expr exprr(context);
+
+    Value* v1 = I.getOperand(0);
+    Value* v2 = I.getOperand(1);
+
+    if(ConstantInt* constantInt = dyn_cast<ConstantInt>(v1)) {
+        exprl = context.bv_val(constantInt->getSExtValue(), constantInt->getType()->getPrimitiveSizeInBits());
+    }
+    else {
+        exprl = getExpr(v1, exprs, val2exprIdx, context);
+    }
+
+    if(ConstantInt* constantInt = dyn_cast<ConstantInt>(v2)) {
+        exprr = context.bv_val(constantInt->getSExtValue(), constantInt->getType()->getPrimitiveSizeInBits());
+    }
+    else {
+        exprr = getExpr(v2, exprs, val2exprIdx, context);
+    }
+
+    CmpInst& cmpInst = cast<CmpInst>(I);
+    CmpInst::Predicate predicate = cmpInst.getPredicate();
+
+    z3::expr condition(context);
+
+    switch(predicate) {
+        case CmpInst::Predicate::ICMP_ULT: condition = exprl < exprr; break;
+        default: assert(false);
+    }
+
+    return getExprWithRefresh(&I, exprs, val2exprIdx, context)
+        == z3::ite(condition, context.bv_val(1, 1), context.bv_val(0, 1));
+
+}
+
+z3::expr KInduction::getExpr(Value* v, z3::expr_vector& exprs, map<Value*, expr_info>& val2exprIdx, z3::context& context) {
+    if(val2exprIdx.find(v) != val2exprIdx.end())
+        return exprs[val2exprIdx[v].index];
+    if(v->getType()->isIntegerTy()) {
+        exprs.push_back(context.bv_const((v->getName().str() + "_0").c_str(), v->getType()->getPrimitiveSizeInBits()));
+        val2exprIdx[v] = expr_info(exprs.size() - 1, 0);
+        return exprs[val2exprIdx[v].index];
+    }
+    else {
+        assert(false);
+    }
+}
+
+z3::expr KInduction::getExprWithRefresh(Value* v, z3::expr_vector& exprs, map<Value*, expr_info>& val2exprIdx, z3::context& context) {
+    if(val2exprIdx.find(v) != val2exprIdx.end()) {
+        int idx = val2exprIdx[v].index;
+        val2exprIdx[v].times++;
+        if(GlobalValue* gv = dyn_cast<GlobalValue>(v)) {
+            if(gv->getType()->isIntegerTy()) {
+                exprs[idx] = context.bv_const((v->getName().str() + "_" + to_string(val2exprIdx[v].times)).c_str(),
+                            v->getType()->getPrimitiveSizeInBits());
+            }
+            else {
+                assert(false);
+            }
+        }
+        else if(v->getType()->isIntegerTy()) {
+            exprs[idx] = context.bv_const((v->getName().str() + "_" + to_string(val2exprIdx[v].times)).c_str(),
+                            v->getType()->getPrimitiveSizeInBits());
+        }
+        else {
+            assert(false);
+        }
+        return exprs[idx];
+    }
+    else {
+        if(GlobalValue* gv = dyn_cast<GlobalValue>(v)) {
+            assert(gv->getType()->isPointerTy());
+            PointerType* pointerType = dyn_cast<PointerType>(gv->getType());
+            if(pointerType->getElementType()->isIntegerTy()) {
+                exprs.push_back(context.bv_const((v->getName().str() + "_0").c_str(), pointerType->getElementType()->getPrimitiveSizeInBits()));
+                val2exprIdx[v] = expr_info(exprs.size() - 1, 0);
+                return exprs[val2exprIdx[v].index];
+            }
+            else {
+                assert(false);
+            }
+        }
+        else if(v->getType()->isIntegerTy()) {
+            exprs.push_back(context.bv_const((v->getName().str() + "_0").c_str(), v->getType()->getPrimitiveSizeInBits()));
+            val2exprIdx[v] = expr_info(exprs.size() - 1, 0);
+            return exprs[val2exprIdx[v].index];
+        }
+        else {
+            errs() << *v->getType() << "\n";
+            assert(false);
+        }
+    }
 }
 
 

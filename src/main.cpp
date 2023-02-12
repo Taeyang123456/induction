@@ -27,7 +27,7 @@ int main(int argc ,char* argv[]){
 		return 0;
 	}
 	unique_ptr<llvm::Module> mod = compile(argv[1], g_LLVMCtx);
-    for(unsigned K = 1; K <= 5; K+=2) {
+    for(unsigned K = 1; K <= 5; K++) {
         auto result = KInduction::verify(*mod, K);
         switch (result) {
             case KInduction::UNKNOWN :

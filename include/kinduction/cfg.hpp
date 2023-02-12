@@ -20,7 +20,9 @@ struct CFGNode {
 struct Path {
     enum NodeType {
         ALoop,
-        ANode
+        ANode,
+        ERRORNODE,
+        ERRORLOOP
     };
     NodeType type;
     int loopLCSSAIdx = 0;

@@ -6,7 +6,20 @@
 #include "kinduction/spec.hpp"
 #include "kinduction/loop_info.hpp"
 
+
+
+#include <map>
+#include <z3++.h>
+
 #define DEFAULT_ARG_K 1
+
+
+struct expr_info {
+    int index = -1;
+    int times = 0;
+    expr_info() {}
+    expr_info(int a, int b) { index = a; times = b; }
+};
 
 class KInduction {
 public:
@@ -17,7 +30,6 @@ public:
 	static Result verify(const llvm::Module&, const unsigned = DEFAULT_ARG_K);	
 private:
 
-    
 
     static void buildCFG(std::vector<LCSSA>&, llvm::Function*);
 	static void standardize(llvm::Module&);
@@ -28,7 +40,14 @@ private:
     static bool basicBlockDFS(std::vector<int>&);
     static int findVerifyLoop(std::vector<LCSSA>&);
     static bool baseCase(std::vector<Path>&, int, std::vector<LCSSA>&, unsigned);
+    static bool baseCaseSMTChecking(std::vector<int>& , int);
     static int getCFGNodeVecIndexByBB(const llvm::BasicBlock*);
+
+    static z3::expr handleBinaryOp(llvm::Instruction&, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, z3::context&);
+    static z3::expr handleCmpOp(llvm::Instruction&, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, z3::context&);
+
+    static z3::expr getExpr(llvm::Value*, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, z3::context&);
+    static z3::expr getExprWithRefresh(llvm::Value*, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, z3::context&);
 
 };
 
