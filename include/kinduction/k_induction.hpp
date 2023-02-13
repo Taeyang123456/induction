@@ -30,6 +30,7 @@ public:
 	static Result verify(const llvm::Module&, const unsigned = DEFAULT_ARG_K);	
 private:
 
+    static bool isFirstNondet;
 
     static void buildCFG(std::vector<LCSSA>&, llvm::Function*);
 	static void standardize(llvm::Module&);
@@ -48,6 +49,8 @@ private:
 
     static z3::expr getExpr(llvm::Value*, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, z3::context&);
     static z3::expr getExprWithRefresh(llvm::Value*, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, z3::context&);
+
+    static void clear() { isFirstNondet = true; }
 
 };
 

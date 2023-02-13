@@ -24,6 +24,7 @@ using namespace std;
 using namespace llvm;
 
 static std::vector<CFGNode> CFGNodeVec;
+bool KInduction::isFirstNondet;
 
 KInduction::Result KInduction::verify(const Module& t_M, const unsigned k){
 
@@ -419,6 +420,7 @@ bool KInduction::baseCase(vector<Path>& path, int assertLoopIdx, vector<LCSSA>& 
             // for(int i = 0; i < baseNodeIdx.size(); i++) {
             //     cout << baseNodeIdx[i] << endl;
             // }
+            clear();
             baseCaseSMTChecking(baseNodeIdx, errorLoopCount);
 
             baseNodeIdx.clear();
@@ -450,6 +452,7 @@ bool KInduction::baseCaseSMTChecking(vector<int>& baseNodeIdx, int kval) {
 
     z3::context context;
     std::map<llvm::Value*, expr_info> val2exprIdx;
+    std::map<llvm::Value*, int> val2ArrayIdx;
     z3::expr_vector exprs(context);
 
 
@@ -462,10 +465,25 @@ bool KInduction::baseCaseSMTChecking(vector<int>& baseNodeIdx, int kval) {
             if(isa<CallInst>(I)) {
                 CallInst& callInst = cast<CallInst>(I);
                 if(callInst.getCalledFunction()->getName().str() == "__VERIFIER_nondet_int") {
-                    Value* destVal = &callInst;
-                    problems.push_back(getExprWithRefresh(destVal, exprs, val2exprIdx, context) == kval);
+                    if(isFirstNondet) {
+                        isFirstNondet = false;
+                        Value* destVal = &callInst;
+                        problems.push_back(getExprWithRefresh(destVal, exprs, val2exprIdx, context) == kval);
+                    }
+                    else {
+                        getExprWithRefresh(&callInst, exprs, val2exprIdx, context);
+                    }
+                }
+                else if(callInst.getCalledFunction()->getName().str() == "malloc") {
+                    z3::sort Int = context.int_sort();
+                    z3::sort Array = context.array_sort(Int, Int);
+                    z3::expr arr = context.constant("arr", Array);
+                    exprs.push_back(arr);
+                    val2ArrayIdx[&callInst] = exprs.size() - 1;
+                    problems.push_back(arr);
                 }
                 else {
+                    outs() << callInst << "\n";
                     assert(false);
                 }
             }
@@ -490,6 +508,15 @@ bool KInduction::baseCaseSMTChecking(vector<int>& baseNodeIdx, int kval) {
             else if(isa<CmpInst>(I)) {
                 problems.push_back(handleCmpOp(I, exprs, val2exprIdx, context));
             }
+            else if(isa<BitCastInst>(I)) {
+                BitCastInst& bitcastInst = cast<BitCastInst>(I);
+                Value* srcVal = bitcastInst.getOperand(0);
+                Value* destVal = &I;
+
+                assert(val2ArrayIdx.find(srcVal) != val2ArrayIdx.end());
+
+                val2ArrayIdx[destVal] = val2ArrayIdx[srcVal];
+            }
             else if(isa<BranchInst>(I)) {
                 BranchInst& branchInst = cast<BranchInst>(I);
                 if(branchInst.isConditional()) {
@@ -511,6 +538,38 @@ bool KInduction::baseCaseSMTChecking(vector<int>& baseNodeIdx, int kval) {
                     }
 
                 }
+            }
+            else if(isa<PHINode>(I)) {
+                PHINode& phNode = cast<PHINode>(I);
+
+                assert(i > 0);
+                int prevNodeIdx = baseNodeIdx[i - 1];
+
+                int j = 0;
+                for(; j < phNode.getNumIncomingValues(); j++) {
+                    if(phNode.getIncomingBlock(j) == CFGNodeVec[prevNodeIdx].bb)
+                        break;
+                }
+                assert(j < phNode.getNumIncomingValues());
+
+                Value* v1 = phNode.getIncomingValue(j);
+                problems.push_back(getExprWithRefresh(&I, exprs, val2exprIdx, context) 
+                        == getExpr(v1, exprs, val2exprIdx, context));
+            }
+            else if(isa<GetElementPtrInst>(I)) {
+                GetElementPtrInst& gepInst = cast<GetElementPtrInst>(I);
+                assert(gepInst.getNumOperands() == 2);
+                Value* v1 = gepInst.getOperand(0);
+                Value* v2 = gepInst.getOperand(1);
+
+                assert(val2ArrayIdx.find(v1) != val2ArrayIdx.end());
+                assert(I.getType()->isPointerTy());
+
+                
+
+                return getExprWithRefresh(&I, exprs, val2exprIdx, context) 
+                    == z3::select(exprs[val2ArrayIdx[v1]], z3::bv2int(getExpr(v2, exprs, val2exprIdx, context), true));
+
             }
             else {
                 errs() << I << "\n";
@@ -555,8 +614,14 @@ z3::expr KInduction::handleBinaryOp(Instruction& I, z3::expr_vector& exprs, map<
     if(isa<AddOperator>(I)) {
         return getExprWithRefresh(&I, exprs, val2exprIdx, context) == exprl + exprr;
     }
+    else if(isa<SubOperator>(I)) {
+        return getExprWithRefresh(&I, exprs, val2exprIdx, context) == exprl - exprr;
+    }
     else if(isa<ShlOperator>(I)) {
         return getExprWithRefresh(&I, exprs, val2exprIdx, context) == z3::shl(exprl, exprr);
+    }
+    else if(strcmp(I.getOpcodeName(), "and") == 0) {
+        return getExprWithRefresh(&I, exprs, val2exprIdx, context) == (exprl & exprr);
     }
     else {
         outs() << I << "\n";
@@ -591,8 +656,9 @@ z3::expr KInduction::handleCmpOp(Instruction& I, z3::expr_vector& exprs, map<Val
     z3::expr condition(context);
 
     switch(predicate) {
-        case CmpInst::Predicate::ICMP_ULT: condition = exprl < exprr; break;
-        default: assert(false);
+        case CmpInst::Predicate::ICMP_ULT:  condition = exprl < exprr;  break;
+        case CmpInst::Predicate::ICMP_EQ:   condition = exprl == exprr; break;
+        default: outs() << I << "\n"; assert(false);
     }
 
     return getExprWithRefresh(&I, exprs, val2exprIdx, context)
@@ -652,6 +718,17 @@ z3::expr KInduction::getExprWithRefresh(Value* v, z3::expr_vector& exprs, map<Va
             exprs.push_back(context.bv_const((v->getName().str() + "_0").c_str(), v->getType()->getPrimitiveSizeInBits()));
             val2exprIdx[v] = expr_info(exprs.size() - 1, 0);
             return exprs[val2exprIdx[v].index];
+        }
+        else if(v->getType()->isPointerTy()) {
+            PointerType* pointerType = dyn_cast<PointerType>(v->getType());
+            if(pointerType->getElementType()->isIntegerTy()) {
+                exprs.push_back(context.bv_const((v->getName().str() + "_0").c_str(), pointerType->getElementType()->getPrimitiveSizeInBits()));
+                val2exprIdx[v] = expr_info(exprs.size() - 1, 0);
+                return exprs[val2exprIdx[v].index];
+            }
+            else {
+                assert(false);
+            }
         }
         else {
             errs() << *v->getType() << "\n";
