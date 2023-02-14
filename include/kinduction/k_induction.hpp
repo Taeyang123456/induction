@@ -42,6 +42,8 @@ private:
     static int findVerifyLoop(std::vector<LCSSA>&);
     static bool baseCase(std::vector<Path>&, int, std::vector<LCSSA>&, unsigned);
     static bool baseCaseSMTChecking(std::vector<int>& , int);
+    static bool inductiveStep(std::vector<Path>&, int, std::vector<LCSSA>&, unsigned);
+    static bool inductiveStepSMTChecking(std::vector<int>&, int);
     static int getCFGNodeVecIndexByBB(const llvm::BasicBlock*);
 
     static z3::expr handleBinaryOp(llvm::Instruction&, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, z3::context&);

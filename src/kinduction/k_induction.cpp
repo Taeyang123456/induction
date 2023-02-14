@@ -65,24 +65,24 @@ KInduction::Result KInduction::verify(const Module& t_M, const unsigned k){
     vector<Path> path;
     collectVerifyPath(path, initNode, MainLCSSAs, assertLoopIdx);
 
-    cout << "PRINT PATH:\n";
-    for(int i = 0; i < path.size(); i++) {
-        if(path[i].type == Path::NodeType::ANode) {
-            cout << "Node : " << path[i].nodeIdx << endl;
-        }
-        else if(path[i].type == Path::NodeType::ALoop) {
-            cout << "Loop : " << path[i].loopLCSSAIdx << endl;
-        }
-        else if(path[i].type == Path::NodeType::ERRORLOOP) {
-            cout << "ERRORLOOP : " << endl;
-        }
-        else if(path[i].type == Path::NodeType::ERRORNODE) {
-            cout << "ERRORNODE : " << endl;
-        }
-        else {
-            assert(false);
-        }
-    }
+    // cout << "PRINT PATH:\n";
+    // for(int i = 0; i < path.size(); i++) {
+    //     if(path[i].type == Path::NodeType::ANode) {
+    //         cout << "Node : " << path[i].nodeIdx << endl;
+    //     }
+    //     else if(path[i].type == Path::NodeType::ALoop) {
+    //         cout << "Loop : " << path[i].loopLCSSAIdx << endl;
+    //     }
+    //     else if(path[i].type == Path::NodeType::ERRORLOOP) {
+    //         cout << "ERRORLOOP : " << endl;
+    //     }
+    //     else if(path[i].type == Path::NodeType::ERRORNODE) {
+    //         cout << "ERRORNODE : " << endl;
+    //     }
+    //     else {
+    //         assert(false);
+    //     }
+    // }
 
 
 
@@ -96,10 +96,17 @@ KInduction::Result KInduction::verify(const Module& t_M, const unsigned k){
 
 
 
-    baseCase(path, assertLoopIdx, MainLCSSAs, k);    
+    if(!baseCase(path, assertLoopIdx, MainLCSSAs, k))
+        return FALSE; 
 
+    cout << "BASE CASE PASS" << endl;
 
-	return UNKNOWN;
+    if(!inductiveStep(path, assertLoopIdx, MainLCSSAs, k))
+        return FALSE;
+
+    cout << "INDUCTIVE STEP PASS" << endl;
+
+	return TRUE;
 }
 
 void KInduction::standardize(Module& M){
@@ -432,12 +439,14 @@ bool KInduction::baseCase(vector<Path>& path, int assertLoopIdx, vector<LCSSA>& 
                 }
             }
 
-            cout << "base node : " << endl;
-            for(int i = 0; i < baseNodeIdx.size(); i++) {
-                cout << baseNodeIdx[i] << endl;
-            }
+            // cout << "base node : " << endl;
+            // for(int i = 0; i < baseNodeIdx.size(); i++) {
+            //     cout << baseNodeIdx[i] << endl;
+            // }
             clear();
-            baseCaseSMTChecking(baseNodeIdx, errorLoopCount);
+            if(!baseCaseSMTChecking(baseNodeIdx, errorLoopCount)) {
+                return false;
+            }
 
             baseNodeIdx.clear();
         }
@@ -497,7 +506,7 @@ bool KInduction::baseCaseSMTChecking(vector<int>& baseNodeIdx, int kval) {
                     z3::expr arr = context.constant("arr", Array);
                     exprs.push_back(arr);
                     val2ArrayIdx[&callInst] = exprs.size() - 1;
-                    problems.push_back(arr);
+                    // problems.push_back(arr);
                 }
                 else if(callInst.getCalledFunction()->getName().str() == "reach_error") {
 
@@ -524,9 +533,15 @@ bool KInduction::baseCaseSMTChecking(vector<int>& baseNodeIdx, int kval) {
 
                     assert(val2ArrayIdx.find(v1) != val2ArrayIdx.end());
                     
-                    problems.push_back(z3::store(exprs[val2ArrayIdx[v1]], 
-                        z3::bv2int(getExpr(v2, exprs, val2exprIdx, context), true),
-                        z3::bv2int(getExpr(srcVal, exprs, val2exprIdx, context), true)));
+                    z3::sort arr_sort = exprs[val2ArrayIdx[v1]].get_sort();
+
+                    z3::expr newArray = context.constant("arr", arr_sort);
+
+                    problems.push_back(newArray == z3::store(exprs[val2ArrayIdx[v1]], 
+                            z3::bv2int(getExpr(v2, exprs, val2exprIdx, context), true),
+                            z3::bv2int(getExpr(srcVal, exprs, val2exprIdx, context), true)));
+
+                    exprs[val2ArrayIdx[v1]] = newArray;
                 }
                 else {
                     outs() << I << "\n";
@@ -657,6 +672,302 @@ bool KInduction::baseCaseSMTChecking(vector<int>& baseNodeIdx, int kval) {
                 assert(false);
             }
         }
+    }
+
+    z3::solver s(context);
+    for(int i = 0; i < problems.size(); i++) {
+        // cout << problems[i] << endl;
+        s.add(problems[i]);
+    }
+
+    z3::check_result res = s.check();
+    switch (res)    {
+    case z3::unsat: cout << "base unsat" << endl;   return true;    break;
+    case z3::sat:   cout << "base sat" << endl;     return false;   break;
+    default: assert(false);                                         break;
+    }
+}
+
+
+
+bool KInduction::inductiveStep(std::vector<Path>& path, int assertLoopIdx, std::vector<LCSSA>& LCSSAs, unsigned k) {
+    
+    
+    // Pattern 1 : VERIFIER_assert in a loop
+    if(path.size() >= 2 && path.back().type == Path::NodeType::ERRORNODE &&
+        path[path.size() - 2].type == Path::NodeType::ERRORLOOP) {
+        vector<int> baseNodeIdx;
+
+        for(int errorLoopCount = 1; errorLoopCount <= k; errorLoopCount++) {
+            for(int i = 0; i < path.size(); i++) {
+                if(path[i].type == Path::ANode) {
+                    baseNodeIdx.push_back(path[i].nodeIdx);
+                }
+                else if(path[i].type == Path::ALoop) {
+                    int lcssaIdx = path[i].loopLCSSAIdx;
+                    assert(LCSSAs[lcssaIdx].backedge.first == LCSSAs[lcssaIdx].bbVec[0] 
+                            && LCSSAs[lcssaIdx].backedge.second == LCSSAs[lcssaIdx].bbVec.back());
+                    for(int j = 0; j < k; j++) {
+                        for(int loop_bb_count = 0; loop_bb_count < LCSSAs[lcssaIdx].bbVec.size(); loop_bb_count++) {
+                            baseNodeIdx.push_back(getCFGNodeVecIndexByBB(LCSSAs[lcssaIdx].bbVec[loop_bb_count]));
+                        }
+                    }
+                }
+                else if(path[i].type == Path::ERRORLOOP) {
+                    int lcssaIdx = path[i].loopLCSSAIdx;
+                    for(int j = 0; j < errorLoopCount - 1; j++) {
+                        for(int bbCount = 0; bbCount < LCSSAs[lcssaIdx].bbVec.size(); bbCount++) {
+                            baseNodeIdx.push_back(getCFGNodeVecIndexByBB(LCSSAs[lcssaIdx].bbVec[bbCount]));
+                        }
+                    }
+                    assert(i + 1 < path.size() && path[i + 1].type == Path::ERRORNODE);
+                    int errorNodeIdx = path[i + 1].nodeIdx;
+                    for(int bbCount = 0; bbCount < LCSSAs[lcssaIdx].bbVec.size(); bbCount++) {
+                        int currentBBIdx = getCFGNodeVecIndexByBB(LCSSAs[lcssaIdx].bbVec[bbCount]);
+                        baseNodeIdx.push_back(currentBBIdx);
+                        bool findErrorNode = false;
+                        for(int j = 0; j < CFGNodeVec[currentBBIdx].childs.size(); j++) {
+                            if(CFGNodeVec[currentBBIdx].childs[j] == errorNodeIdx) {
+                                baseNodeIdx.push_back(errorNodeIdx);
+                                findErrorNode = true;
+                                break;
+                            }
+                        }
+                        if(findErrorNode)
+                            break;
+                    }
+                }
+                else if(path[i].type == Path::ERRORNODE) {
+                    // baseNodeIdx.push_back(path[i].nodeIdx);
+                }
+                else {
+                    assert(false);
+                }
+            }
+
+            // cout << "base node : " << endl;
+            // for(int i = 0; i < baseNodeIdx.size(); i++) {
+            //     cout << baseNodeIdx[i] << endl;
+            // }
+            clear();
+            if(!inductiveStepSMTChecking(baseNodeIdx, errorLoopCount)) {
+                return false;
+            }
+
+            baseNodeIdx.clear();
+        }
+    }
+    else {
+        assert(false && "Inductive Step Path type not support");
+    }
+
+    return true;
+}
+
+bool KInduction::inductiveStepSMTChecking(vector<int>& baseNodeIdx, int kval) {
+    z3::context context;
+    std::map<llvm::Value*, expr_info> val2exprIdx;
+    std::map<llvm::Value*, int> val2ArrayIdx;
+    z3::expr_vector exprs(context);
+
+
+    z3::expr_vector problems(context);
+
+    for(int i = 0; i < baseNodeIdx.size(); i++) {
+        int nodeIdx = baseNodeIdx[i];
+        BasicBlock* bb = CFGNodeVec[nodeIdx].bb;
+        for(Instruction& I : *bb) {
+            // outs() << I << "\n";
+            if(isa<CallInst>(I)) {
+                CallInst& callInst = cast<CallInst>(I);
+                if(callInst.getCalledFunction()->getName().str() == "__VERIFIER_nondet_int") {
+                    getExprWithRefresh(&callInst, exprs, val2exprIdx, context);
+                }
+                else if(callInst.getCalledFunction()->getName().str() == "malloc") {
+                    z3::sort Int = context.int_sort();
+                    z3::sort Array = context.array_sort(Int, Int);
+                    z3::expr arr = context.constant("arr", Array);
+                    exprs.push_back(arr);
+                    val2ArrayIdx[&callInst] = exprs.size() - 1;
+                    // problems.push_back(arr);
+                }
+                else if(callInst.getCalledFunction()->getName().str() == "reach_error") {
+
+                }
+                else {
+                    outs() << callInst << "\n";
+                    assert(false);
+                }
+            }
+            else if(isa<StoreInst>(I)) {
+                StoreInst& storeInst = cast<StoreInst>(I);
+                Value* srcVal = storeInst.getOperand(0);
+                Value* destVal = storeInst.getOperand(1);
+                assert(destVal->getType()->isPointerTy());
+                
+                if(GlobalValue* gv = dyn_cast<GlobalValue>(destVal)) {
+                    problems.push_back(getExpr(srcVal, exprs, val2exprIdx, context) 
+                            == getExprWithRefresh(destVal, exprs, val2exprIdx, context));
+                }
+                else if(GetElementPtrInst* gepInst = dyn_cast<GetElementPtrInst>(destVal)) {
+                    assert(gepInst->getNumOperands() == 2);
+                    Value* v1 = gepInst->getOperand(0);
+                    Value* v2 = gepInst->getOperand(1);
+
+                    assert(val2ArrayIdx.find(v1) != val2ArrayIdx.end());
+                    
+                    z3::sort arr_sort = exprs[val2ArrayIdx[v1]].get_sort();
+
+                    z3::expr newArray = context.constant("arr", arr_sort);
+
+                    problems.push_back(newArray == z3::store(exprs[val2ArrayIdx[v1]], 
+                            z3::bv2int(getExpr(v2, exprs, val2exprIdx, context), true),
+                            z3::bv2int(getExpr(srcVal, exprs, val2exprIdx, context), true)));
+
+                    exprs[val2ArrayIdx[v1]] = newArray;
+                }
+                else {
+                    outs() << I << "\n";
+                    assert(false);
+                }
+                
+            }
+            else if(isa<BinaryOperator>(I)) {
+                problems.push_back(handleBinaryOp(I, exprs, val2exprIdx, context));
+            }
+            else if(isa<CmpInst>(I)) {
+                problems.push_back(handleCmpOp(I, exprs, val2exprIdx, context));
+            }
+            else if(isa<BitCastInst>(I)) {
+                BitCastInst& bitcastInst = cast<BitCastInst>(I);
+                Value* srcVal = bitcastInst.getOperand(0);
+                Value* destVal = &I;
+
+                assert(val2ArrayIdx.find(srcVal) != val2ArrayIdx.end());
+
+                val2ArrayIdx[destVal] = val2ArrayIdx[srcVal];
+            }
+            else if(isa<BranchInst>(I)) {
+                BranchInst& branchInst = cast<BranchInst>(I);
+                if(branchInst.isConditional()) {
+                    Value* conditionVal = branchInst.getOperand(0);
+                    Value* bb1Val = branchInst.getOperand(2);
+                    Value* bb2Val = branchInst.getOperand(1);
+
+                    assert(i + 1 <= baseNodeIdx.size());
+                    int nextNodeIdx = baseNodeIdx[i + 1];
+                    BasicBlock* nextbb = CFGNodeVec[nextNodeIdx].bb;
+                    if(nextbb->getName() == bb1Val->getName()) {
+                        problems.push_back(getExpr(conditionVal, exprs, val2exprIdx, context) == 1);
+                    }
+                    else if(nextbb->getName() == bb2Val->getName()) {
+                        problems.push_back(getExpr(conditionVal, exprs, val2exprIdx, context) == 0);
+                    }
+                    else {
+                        outs() << I << "\n";
+                        assert(false);
+                    }
+
+                }
+            }
+            else if(isa<PHINode>(I)) {
+                PHINode& phNode = cast<PHINode>(I);
+
+                assert(i > 0);
+                int prevNodeIdx = baseNodeIdx[i - 1];
+
+                int j = 0;
+                for(; j < phNode.getNumIncomingValues(); j++) {
+                    if(!isa<Constant>(phNode.getIncomingValue(j)))
+                        break;
+                }
+                assert(j < phNode.getNumIncomingValues());
+
+                Value* v1 = phNode.getIncomingValue(j);
+                problems.push_back(getExprWithRefresh(&I, exprs, val2exprIdx, context) 
+                        == getExpr(v1, exprs, val2exprIdx, context));
+            }
+            else if(isa<GetElementPtrInst>(I)) {
+                GetElementPtrInst& gepInst = cast<GetElementPtrInst>(I);
+                assert(gepInst.getNumOperands() == 2);
+                Value* v1 = gepInst.getOperand(0);
+                Value* v2 = gepInst.getOperand(1);
+
+                assert(val2ArrayIdx.find(v1) != val2ArrayIdx.end());
+                assert(I.getType()->isPointerTy());
+
+
+                problems.push_back(bv2int(getExprWithRefresh(&I, exprs, val2exprIdx, context), true)
+                    == z3::select(exprs[val2ArrayIdx[v1]], z3::bv2int(getExpr(v2, exprs, val2exprIdx, context), true)));
+
+            }
+            else if(isa<SelectInst>(I)) {
+                SelectInst& selectInst = cast<SelectInst>(I);
+                Value* condVal = selectInst.getCondition();
+                Value* trueVal = selectInst.getTrueValue();
+                Value* falseVal = selectInst.getFalseValue();
+
+                z3::expr exprl(context);
+                z3::expr exprr(context);
+
+                if(ConstantInt* constantInt = dyn_cast<ConstantInt>(trueVal)) {
+                    exprl = context.bv_val(constantInt->getSExtValue(), constantInt->getType()->getPrimitiveSizeInBits());
+                }
+                else {
+                    exprl = getExpr(trueVal, exprs, val2exprIdx, context);
+                }
+
+                if(ConstantInt* constantInt = dyn_cast<ConstantInt>(falseVal)) {
+                    exprr = context.bv_val(constantInt->getSExtValue(), constantInt->getType()->getPrimitiveSizeInBits());
+                }
+                else {
+                    exprr = getExpr(falseVal, exprs, val2exprIdx, context);
+                }
+
+                problems.push_back(getExprWithRefresh(&I, exprs, val2exprIdx, context) 
+                        == z3::ite(getExpr(condVal, exprs, val2exprIdx, context) == context.bv_val(1, 1), 
+                            exprl, exprr));
+            }
+            else if(isa<LoadInst>(I)) {
+                Value* v = I.getOperand(0);
+                problems.push_back(getExprWithRefresh(&I, exprs, val2exprIdx, context)
+                    == getExpr(v, exprs, val2exprIdx, context));
+            }
+            else if(isa<SExtInst>(I)) {
+                Value* srcVal = I.getOperand(0);
+                Value* destVal = &I;
+                problems.push_back(getExprWithRefresh(&I, exprs, val2exprIdx, context)
+                    == z3::sext(getExpr(srcVal, exprs, val2exprIdx, context), 
+                                destVal->getType()->getPrimitiveSizeInBits() - srcVal->getType()->getPrimitiveSizeInBits()));
+            }
+            else if(isa<ZExtInst>(I)) {
+                Value* srcVal = I.getOperand(0);
+                Value* destVal = &I;
+                problems.push_back(getExprWithRefresh(&I, exprs, val2exprIdx, context)
+                    == z3::zext(getExpr(srcVal, exprs, val2exprIdx, context), 
+                                destVal->getType()->getPrimitiveSizeInBits() - srcVal->getType()->getPrimitiveSizeInBits()));
+            }
+            else if(isa<UnreachableInst>(I)) {
+
+            }
+            else {
+                errs() << I << "\n";
+                assert(false);
+            }
+        }
+    }
+
+    z3::solver s(context);
+    for(int i = 0; i < problems.size(); i++) {
+        // cout << problems[i] << endl;
+        s.add(problems[i]);
+    }
+
+    z3::check_result res = s.check();
+    switch (res)    {
+    case z3::unsat: cout << "inductive unsat" << endl;  return true;    break;
+    case z3::sat:   cout << "inductive sat" << endl;    return false;   break;
+    default: assert(false);                                             break;
     }
 }
 
