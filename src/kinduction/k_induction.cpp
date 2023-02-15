@@ -58,55 +58,50 @@ KInduction::Result KInduction::verify(const Module& t_M, const unsigned k){
     assert(assertLoopIdx != -1);
     cout << "find assert in : " << assertLoopIdx << endl;
 
-    vector<int> initNode;
-    collectInitBasicBlock(initNode);
-    assert(initNode.size() > 0);
+
+    vector<vector<int>> initNodes;
+    collectInitBasicBlock(initNodes);
+    assert(initNodes.size() > 0);
     
-    vector<Path> path;
-    collectVerifyPath(path, initNode, MainLCSSAs, assertLoopIdx);
+    for(int i = 0; i < initNodes.size(); i++) {
 
-    // cout << "PRINT PATH:\n";
-    // for(int i = 0; i < path.size(); i++) {
-    //     if(path[i].type == Path::NodeType::ANode) {
-    //         cout << "Node : " << path[i].nodeIdx << endl;
-    //     }
-    //     else if(path[i].type == Path::NodeType::ALoop) {
-    //         cout << "Loop : " << path[i].loopLCSSAIdx << endl;
-    //     }
-    //     else if(path[i].type == Path::NodeType::ERRORLOOP) {
-    //         cout << "ERRORLOOP : " << endl;
-    //     }
-    //     else if(path[i].type == Path::NodeType::ERRORNODE) {
-    //         cout << "ERRORNODE : " << endl;
-    //     }
-    //     else {
-    //         assert(false);
-    //     }
-    // }
+        cout << "INIT PATH : " << i << endl;
 
+        vector<Path> path;
+        collectVerifyPath(path, initNodes[i], MainLCSSAs, assertLoopIdx);
 
-
-    
-
-    // cout << "find path : " << endl;
-    // for(int i = 0; i < initNode.size(); i++)
-    //     cout << CFGNodeVec[initNode[i]].bb->getName().str() << endl;
-    
-    
+        // cout << "PRINT PATH:\n";
+        // for(int i = 0; i < path.size(); i++) {
+        //     if(path[i].type == Path::NodeType::ANode) {
+        //         cout << "Node : " << path[i].nodeIdx << endl;
+        //     }
+        //     else if(path[i].type == Path::NodeType::ALoop) {
+        //         cout << "Loop : " << path[i].loopLCSSAIdx << endl;
+        //     }
+        //     else if(path[i].type == Path::NodeType::ERRORLOOP) {
+        //         cout << "ERRORLOOP : " << endl;
+        //     }
+        //     else if(path[i].type == Path::NodeType::ERRORNODE) {
+        //         cout << "ERRORNODE : " << endl;
+        //     }
+        //     else {
+        //         assert(false);
+        //     }
+        // }
 
 
+        if(!baseCase(path, assertLoopIdx, MainLCSSAs, k))
+            return FALSE; 
 
-    if(!baseCase(path, assertLoopIdx, MainLCSSAs, k))
-        return FALSE; 
+        cout << "BASE CASE PASS" << endl;
 
-    cout << "BASE CASE PASS" << endl;
+        if(!inductiveStep(path, assertLoopIdx, MainLCSSAs, k))
+            return FALSE;
 
-    if(!inductiveStep(path, assertLoopIdx, MainLCSSAs, k))
-        return FALSE;
+        cout << "INDUCTIVE STEP PASS" << endl;
 
-    cout << "INDUCTIVE STEP PASS" << endl;
-
-	return TRUE;
+    }
+    return TRUE;
 }
 
 void KInduction::standardize(Module& M){
@@ -210,13 +205,13 @@ void KInduction::buildCFG(vector<LCSSA>& LCSSAInfo, Function* mainFunc) {
     
 }
 
-void KInduction::collectInitBasicBlock(vector<int>& initNode) {
+void KInduction::collectInitBasicBlock(vector<vector<int>>& initNodes) {
     assert(CFGNodeVec.size() > 0);
-    initNode.push_back(0);
-    basicBlockDFS(initNode);
+    vector<int> initNode = {0};
+    basicBlockDFS(initNodes, initNode);
 }
 
-bool KInduction::basicBlockDFS(vector<int>& vec) {
+bool KInduction::basicBlockDFS(vector<vector<int>>& initNodes, vector<int>& vec) {
 
     assert(vec.size() >= 1);
     // cout << "print vec : " << endl;
@@ -231,30 +226,31 @@ bool KInduction::basicBlockDFS(vector<int>& vec) {
     }
 
     int path_count = 0;
-    vector<int> tmp;
     
     for(int& nextNodeIdx : CFGNodeVec[lastNodeIdx].childs) {
         // cout << "vec push : " << nextNodeIdx << endl;
         vec.push_back(nextNodeIdx);
-        if(basicBlockDFS(vec)) {
-            tmp = vec;
+        if(basicBlockDFS(initNodes, vec)) {
+            initNodes.push_back(vec);
             path_count++;
         }
         // cout << "vec pop back : " << vec.back() << endl;
         vec.pop_back();
     }
     
-    assert(path_count <= 1);
-    vec = tmp;
-    if(path_count == 0)
-        return false;
-    else
-        return true;
+    // cout << "path_count = " << path_count << endl;
+    // assert(path_count <= 1);
+    return false;
 }
 
 void KInduction::collectVerifyPath(vector<Path>& path, vector<int>& initNodes, vector<LCSSA>& LCSSAs, 
                                 int assertLoopIdx) {
-
+    
+    cout << "PRINT initNodes : " << endl;
+    for(int i = 0; i < initNodes.size(); i++) {
+        cout << initNodes[i] << endl;
+    }
+    
     assert(CFGNodeVec[initNodes.back()].isLoopNode);
     assert(initNodes.size() > 0);
     vector<bool> visit(CFGNodeVec.size(), false);
@@ -327,7 +323,7 @@ void KInduction::collectVerifyPath(vector<Path>& path, vector<int>& initNodes, v
     int i = 0;
     for(; i < CFGNodeVec[errorLoopLastBB].childs.size(); i++) {
         int childIdx = CFGNodeVec[errorLoopLastBB].childs[i];
-        errs() << CFGNodeVec[childIdx].bb->getName() << "\n";
+        // errs() << CFGNodeVec[childIdx].bb->getName() << "\n";
         if(CFGNodeVec[childIdx].bb->getName().str().find("ERROR") != string::npos) {
             path.push_back(Path(Path::NodeType::ERRORNODE, childIdx));
             break;
@@ -1020,6 +1016,9 @@ z3::expr KInduction::handleBinaryOp(Instruction& I, z3::expr_vector& exprs, map<
     }
     else if(strcmp(I.getOpcodeName(), "and") == 0) {
         return getExprWithRefresh(&I, exprs, val2exprIdx, context) == (exprl & exprr);
+    }
+    else if(strcmp(I.getOpcodeName(), "urem") == 0) {
+        return getExprWithRefresh(&I, exprs, val2exprIdx, context) == z3::urem(exprl, exprr);
     }
     else {
         outs() << I << "\n";

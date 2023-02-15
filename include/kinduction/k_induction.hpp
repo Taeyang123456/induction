@@ -36,9 +36,9 @@ private:
 	static void standardize(llvm::Module&);
 	static bool hasNotExpandedCalls(const llvm::Module&, const std::set<std::string>&);
 	static bool hasAssertions(const std::vector<LabeledCondition>&);
-    static void collectInitBasicBlock(std::vector<int>&);
+    static void collectInitBasicBlock(std::vector<std::vector<int>>&);
     static void collectVerifyPath(std::vector<Path>&, std::vector<int>&, std::vector<LCSSA>&, int);
-    static bool basicBlockDFS(std::vector<int>&);
+    static bool basicBlockDFS(std::vector<std::vector<int>>&, std::vector<int>&);
     static int findVerifyLoop(std::vector<LCSSA>&);
     static bool baseCase(std::vector<Path>&, int, std::vector<LCSSA>&, unsigned);
     static bool baseCaseSMTChecking(std::vector<int>& , int);
