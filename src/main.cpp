@@ -11,6 +11,8 @@
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/IR/LLVMContext.h"
 #include <llvm/IR/Module.h>
+#include <llvm/IRReader/IRReader.h>
+#include <llvm/Bitcode/BitcodeReader.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/CodeGen/CodeGenAction.h>
 #include <memory>
@@ -26,7 +28,18 @@ int main(int argc ,char* argv[]){
 		cerr<<"No input file!"<<endl<<"This executable file takes a '.c' filepath as its argument"<<endl;
 		return 0;
 	}
-	unique_ptr<llvm::Module> mod = compile(argv[1], g_LLVMCtx);
+
+    string fileNameWithoutSuffix = string(argv[1]);
+    fileNameWithoutSuffix = fileNameWithoutSuffix.substr(0, fileNameWithoutSuffix.find_last_of('.'));
+    
+
+    string cflangs = " -emit-llvm -g -O2 -fno-vectorize -fno-slp-vectorize ";
+    string command = "clang -c " + cflangs + argv[1] + " -o " + fileNameWithoutSuffix + ".bc";
+    system(command.c_str());
+
+    SMDiagnostic Err;
+	unique_ptr<llvm::Module> mod(parseIRFile(fileNameWithoutSuffix + ".bc", Err, g_LLVMCtx));
+    cout << "compile finish\n";
     for(unsigned K = 1; K <= 5; K++) {
         auto result = KInduction::verify(*mod, K);
         switch (result) {
@@ -61,10 +74,10 @@ unique_ptr<llvm::Module> compile(const string& cfilename, LLVMContext& LLVMCtx){
 
 
 	// Arguments to pass to the clang frontend
-    ArrayRef<const char *> args{"-O2",cfilename.c_str()};
+    ArrayRef<const char *> args{"-O2", "-fno-slp-vectorize", "-fno-vectorize", cfilename.c_str()};
     // Create the compiler invocation
     auto invocation = make_shared<CompilerInvocation>();
-	assert(CompilerInvocation::CreateFromArgs(*invocation, args,*DiagEngine));
+	assert(CompilerInvocation::CreateFromArgs(*invocation, args, *DiagEngine));
 		
 	// Create the compiler instance
     CompilerInstance compiler;

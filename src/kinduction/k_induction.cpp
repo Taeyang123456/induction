@@ -56,8 +56,6 @@ KInduction::Result KInduction::verify(const Module& t_M, const unsigned k){
 
     int assertLoopIdx = findVerifyLoop(MainLCSSAs);
     assert(assertLoopIdx != -1);
-    cout << "find assert in : " << assertLoopIdx << endl;
-
 
     vector<vector<int>> initNodes;
     collectInitBasicBlock(initNodes);
@@ -507,6 +505,9 @@ bool KInduction::baseCaseSMTChecking(vector<int>& baseNodeIdx, int kval) {
                 else if(callInst.getCalledFunction()->getName().str() == "reach_error") {
 
                 }
+                else if(callInst.getCalledFunction()->getName().str().find("llvm.dbg") != string::npos) {
+
+                }
                 else {
                     outs() << callInst << "\n";
                     assert(false);
@@ -789,6 +790,9 @@ bool KInduction::inductiveStepSMTChecking(vector<int>& baseNodeIdx, int kval) {
                 }
                 else if(callInst.getCalledFunction()->getName().str() == "reach_error") {
 
+                }
+                else if(callInst.getCalledFunction()->getName().str().find("llvm.dbg") != string::npos) {
+                    
                 }
                 else {
                     outs() << callInst << "\n";
