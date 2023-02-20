@@ -37,22 +37,26 @@ private:
 	static bool hasNotExpandedCalls(const llvm::Module&, const std::set<std::string>&);
 	static bool hasAssertions(const std::vector<LabeledCondition>&);
     static void collectInitBasicBlock(std::vector<std::vector<int>>&);
-    static void collectVerifyPath(std::vector<Path>&, std::vector<int>&, std::vector<LCSSA>&, int);
+    static void collectVerifyPathErrInLoop(std::vector<Path>&, std::vector<int>&, std::vector<LCSSA>&, int);
+    static void collectVerifyPathErrInNode(std::vector<Path>&, std::vector<int>&, std::vector<LCSSA>&, int);
     static bool basicBlockDFS(std::vector<std::vector<int>>&, std::vector<int>&);
     static int findVerifyLoop(std::vector<LCSSA>&);
-    static bool baseCase(std::vector<Path>&, int, std::vector<LCSSA>&, unsigned);
+    static int findVerifyNode();
+    static bool baseCase(std::vector<Path>&, std::vector<LCSSA>&, unsigned);
     static bool baseCaseSMTChecking(std::vector<int>& , int);
-    static bool inductiveStep(std::vector<Path>&, int, std::vector<LCSSA>&, unsigned);
+    static bool inductiveStep(std::vector<Path>&, std::vector<LCSSA>&, unsigned);
     static bool inductiveStepSMTChecking(std::vector<int>&, int);
     static int getCFGNodeVecIndexByBB(const llvm::BasicBlock*);
 
-    static z3::expr handleBinaryOp(llvm::Instruction&, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, z3::context&);
-    static z3::expr handleCmpOp(llvm::Instruction&, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, z3::context&);
+    static z3::expr handleBinaryOp(llvm::Instruction&, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, std::map<llvm::Value*, int>&, z3::context&);
+    static z3::expr handleCmpOp(llvm::Instruction&, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, std::map<llvm::Value*, int>&, z3::context&);
 
-    static z3::expr getExpr(llvm::Value*, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, z3::context&);
-    static z3::expr getExprWithRefresh(llvm::Value*, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, z3::context&);
+    static std::string valueGetName(llvm::Value*, std::map<llvm::Value*, int>&);
+    static z3::expr getExpr(llvm::Value*, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, std::map<llvm::Value*, int>&, z3::context&);
+    static z3::expr getExprWithRefresh(llvm::Value*, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, std::map<llvm::Value*, int>&, z3::context&);
 
     static void clear() { isFirstNondet = true; }
+    static void printProblemAndSolution(z3::solver&, z3::expr_vector&, z3::expr_vector&);
 
 };
 
