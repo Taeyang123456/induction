@@ -38,14 +38,17 @@ private:
 	static bool hasAssertions(const std::vector<LabeledCondition>&);
     static void collectInitBasicBlock(std::vector<std::vector<int>>&);
     static void collectVerifyPathErrInLoop(std::vector<Path>&, std::vector<int>&, std::vector<LCSSA>&, int);
-    static void collectVerifyPathErrInNode(std::vector<Path>&, std::vector<int>&, std::vector<LCSSA>&, int);
+    static void collectVerifyPathErrInNode(std::vector<std::vector<Path>>&, std::vector<Path>&, std::vector<LCSSA>&, int);
     static bool basicBlockDFS(std::vector<std::vector<int>>&, std::vector<int>&);
     static int findVerifyLoop(std::vector<LCSSA>&);
     static int findVerifyNode();
     static bool baseCase(std::vector<Path>&, std::vector<LCSSA>&, unsigned);
     static bool baseCaseSMTChecking(std::vector<int>& , int);
     static bool inductiveStep(std::vector<Path>&, std::vector<LCSSA>&, unsigned);
-    static bool inductiveStepSMTChecking(std::vector<int>&, int);
+    static bool inductiveStepChecking(std::vector<int>&, std::vector<int>&);
+    static z3::expr_vector inductiveStepSMT(std::vector<int>&, std::map<llvm::Value*, expr_info>&, 
+                std::map<llvm::Value*, int>&, std::map<llvm::Value*, int>&,
+                z3::expr_vector&, z3::context&);
     static int getCFGNodeVecIndexByBB(const llvm::BasicBlock*);
 
     static z3::expr handleBinaryOp(llvm::Instruction&, z3::expr_vector&, std::map<llvm::Value*, expr_info>&, std::map<llvm::Value*, int>&, z3::context&);

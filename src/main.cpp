@@ -53,7 +53,8 @@ int main(int argc ,char* argv[]){
                 break;
 
             case KInduction::TRUE :
-                outs()<<"True\n";
+                outs() << "Solution Found by Induction (K = " << K << ")\n"; 
+                outs() << "True\n";
                 return 0;
                 break;
             
