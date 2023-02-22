@@ -1054,13 +1054,32 @@ bool KInduction::inductiveStepChecking(vector<int>& baseNodeIdx, vector<int>& in
         conclusion = conclusion && inductiveInduc[i];
     }
 
-    s.add(z3::implies(!condition, !conclusion));
-    z3::check_result res = s.check();
-    switch(res) {
-        case z3::unsat:     return true;    break;
-        case z3::sat:       return false;   break;
+    s.add(condition);
+    z3::check_result res1 = s.check();
+    switch(res1) {
+        case z3::unsat:     cout << "BASE UNSAT" << endl;    break;
+        case z3::sat:       cout << "BASE SAT" << endl;  break;
         default:            assert(false);  break;
     }
+
+    z3::solver s1(context);
+    s1.add(conclusion);
+    z3::check_result res2 = s1.check();
+    switch(res2) {
+        case z3::unsat:     cout << "Inductive UNSAT" << endl;    break;
+        case z3::sat:       cout << "Inductive SAT" << endl;  break;
+        default:            assert(false);  break;
+    }
+
+    return true;
+
+    // s.add(z3::implies(!condition, conclusion));
+    // z3::check_result res = s.check();
+    // switch(res) {
+    //     case z3::unsat:     return true;    break;
+    //     case z3::sat:       return false;   break;
+    //     default:            assert(false);  break;
+    // }
 }
 
 z3::expr_vector KInduction::inductiveStepSMT(vector<int>& baseNodeIdx, map<llvm::Value*, expr_info>& val2exprIdx,
@@ -1152,10 +1171,10 @@ z3::expr_vector KInduction::inductiveStepSMT(vector<int>& baseNodeIdx, map<llvm:
                     Value* bb1Val = branchInst.getOperand(2);
                     Value* bb2Val = branchInst.getOperand(1);
 
-                    assert(i + 1 <= baseNodeIdx.size());
+                    assert(i + 1 < baseNodeIdx.size());
                     int nextNodeIdx = baseNodeIdx[i + 1];
                     BasicBlock* nextbb = CFGNodeVec[nextNodeIdx].bb;
-                    // cout << "nextbb name " << nextbb->getName().str() << endl;
+                    
                     if(nextbb->getName() == bb1Val->getName()) {
                         problems.push_back(getExpr(conditionVal, exprs, val2exprIdx, label2Num, context) == 1);
                     }
@@ -1166,6 +1185,7 @@ z3::expr_vector KInduction::inductiveStepSMT(vector<int>& baseNodeIdx, map<llvm:
                         outs() << I << "\n";
                         assert(false);
                     }
+                    
 
                 }
             }
